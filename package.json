@@ -7,7 +7,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "server": "node server/index.js",
-    "verify": "node verify-setup.js"
+    "verify": "node verify-setup.js",
+    "start:frontend": "bash start-frontend.sh",
+    "start:backend": "bash start-backend.sh"
   },
   "dependencies": {
     "react": "^18.2.0",
