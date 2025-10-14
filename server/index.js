@@ -61,7 +61,7 @@ app.post('/api/livekit-token', async (req, res) => {
     })
 
     const token = at.toJwt()
-    const wsUrl = process.env.VITE_LIVEKIT_URL || 'ws://localhost:7880'
+    const wsUrl = process.env.VITE_LIVEKIT_URL || 'ws://20.82.140.166:7880'
 
     res.json({ token, wsUrl })
   } catch (error) {
@@ -275,8 +275,9 @@ app.post('/api/piper-tts', async (req, res) => {
 })
 
 // Start server
-app.listen(PORT, () => {
-  console.log(`🚀 Backend server running on http://localhost:${PORT}`)
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Backend server running on http://20.82.140.166:${PORT}`)
+  console.log(`🌐 Also accessible at http://localhost:${PORT}`)
   console.log('\n📋 Configuration Status:')
   console.log(`  LiveKit: ${process.env.LIVEKIT_API_KEY ? '✅ Configured' : '❌ Not configured'}`)
   console.log(`  Deepgram: ${process.env.DEEPGRAM_API_KEY ? '✅ Configured' : '❌ Not configured'}`)

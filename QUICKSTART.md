@@ -64,14 +64,14 @@ npm run server
 npm run dev
 ```
 
-Visit: **http://localhost:5173**
+Visit: **http://20.82.140.166:5173** (or http://localhost:5173 locally)
 
 ## 🎯 First Use
 
 ### HR Portal Setup
 
 1. **Sign Up**
-   - Open http://localhost:5173
+   - Open http://20.82.140.166:5173 (or http://localhost:5173 locally)
    - Click "Don't have an account? Sign Up"
    - Enter email and password (min 6 characters)
    - Check email for confirmation (Supabase sends it)
@@ -229,7 +229,7 @@ Your AI Interview Platform is now running. Start creating jobs and interviewing 
 ---
 
 **Quick Links:**
-- Frontend: http://localhost:5173
-- Backend API: http://localhost:3001
-- API Health Check: http://localhost:3001/api/health
+- Frontend: http://20.82.140.166:5173 (or http://localhost:5173 locally)
+- Backend API: http://20.82.140.166:3001 (or http://localhost:3001 locally)
+- API Health Check: http://20.82.140.166:3001/api/health
 - Full Docs: [README.md](./README.md)

@@ -130,15 +130,15 @@ npm run dev
 \`\`\`
 
 The application will be available at:
-- Frontend: http://localhost:5173
-- Backend API: http://localhost:3001
+- Frontend: http://20.82.140.166:5173 (or http://localhost:5173)
+- Backend API: http://20.82.140.166:3001 (or http://localhost:3001)
 
 ## 📖 User Guide
 
 ### For HR Staff
 
 1. **Sign Up/Login**
-   - Visit http://localhost:5173
+   - Visit http://20.82.140.166:5173 (or http://localhost:5173 locally)
    - Create an account using your email
    - Check your email for confirmation (if required)
 

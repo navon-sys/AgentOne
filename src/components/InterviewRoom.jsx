@@ -32,7 +32,8 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
   const initializeInterview = async () => {
     try {
       // Get LiveKit token from backend
-      const response = await fetch('/api/livekit-token', {
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://20.82.140.166:3001'
+      const response = await fetch(`${apiUrl}/api/livekit-token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -98,7 +99,8 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
 
     // Request backend to speak the question
     try {
-      await fetch('/api/speak-question', {
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://20.82.140.166:3001'
+      await fetch(`${apiUrl}/api/speak-question`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
