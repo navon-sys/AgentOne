@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
+import QuestionBankManager from './QuestionBankManager'
 
 const JobManagement = ({ user, onSelectJob }) => {
   const [jobs, setJobs] = useState([])
@@ -192,51 +193,15 @@ const JobManagement = ({ user, onSelectJob }) => {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Default Interview Questions
-              </label>
               <p className="text-sm text-gray-500 mb-3">
                 These questions will be used for all candidates unless customized individually.
               </p>
-              <div className="space-y-3">
-                {formData.defaultQuestions.map((question, index) => (
-                  <div key={index} className="flex items-start space-x-2">
-                    <span className="mt-2 text-sm font-medium text-gray-500 w-8">
-                      {index + 1}.
-                    </span>
-                    <input
-                      type="text"
-                      value={question}
-                      onChange={(e) => updateQuestion(index, e.target.value)}
-                      className="input-field flex-1"
-                      placeholder="Enter interview question..."
-                    />
-                    {formData.defaultQuestions.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => removeQuestion(index)}
-                        className="mt-2 text-red-600 hover:text-red-700"
-                      >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-              {formData.defaultQuestions.length < 10 && (
-                <button
-                  type="button"
-                  onClick={addQuestion}
-                  className="mt-3 text-primary-600 hover:text-primary-700 text-sm font-medium flex items-center"
-                >
-                  <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                  </svg>
-                  Add Question
-                </button>
-              )}
+              <QuestionBankManager
+                questions={formData.defaultQuestions}
+                onChange={(questions) => setFormData({ ...formData, defaultQuestions: questions })}
+                maxQuestions={20}
+                title="Default Interview Questions"
+              />
             </div>
 
             <div className="flex space-x-3 pt-4">
