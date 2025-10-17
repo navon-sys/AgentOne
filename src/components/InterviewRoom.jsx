@@ -21,6 +21,8 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
     return () => {
       // Cleanup
       if (room) {
+        console.log('Cleaning up LiveKit room connection')
+        room.removeAllListeners()
         room.disconnect()
       }
       if (mediaStreamRef.current) {
@@ -31,8 +33,34 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
 
   const initializeInterview = async () => {
     try {
+      console.log('🎬 Starting interview initialization...')
+      
+      // Check WebRTC support
+      if (!('RTCPeerConnection' in window)) {
+        throw new Error('Your browser does not support WebRTC. Please use a modern browser like Chrome, Firefox, or Edge.')
+      }
+      
+      // Check if mediaDevices API is available
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error(
+          'Microphone access is not available. ' +
+          'This could be because:\n\n' +
+          '1. You are accessing the site over HTTP instead of HTTPS\n' +
+          '2. Your browser does not support microphone access\n' +
+          '3. Microphone permissions are blocked\n\n' +
+          'Please try:\n' +
+          '• Using Chrome or Firefox\n' +
+          '• Granting microphone permissions when prompted\n' +
+          '• Accessing via localhost or HTTPS'
+        )
+      }
+      
+      console.log('✅ Browser compatibility check passed')
+
       // Get LiveKit token from backend
       const apiUrl = import.meta.env.VITE_API_URL || 'http://20.82.140.166:3001'
+      console.log('📡 Requesting LiveKit token from:', `${apiUrl}/api/livekit-token`)
+      
       const response = await fetch(`${apiUrl}/api/livekit-token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -44,34 +72,147 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
       })
 
       if (!response.ok) {
-        throw new Error('Failed to get LiveKit token. Make sure the backend server is running.')
+        const errorText = await response.text()
+        console.error('Token request failed:', response.status, errorText)
+        throw new Error(`Failed to get LiveKit token (${response.status}). Make sure the backend server is running and LiveKit credentials are configured.`)
       }
 
       const { token, wsUrl } = await response.json()
+      console.log('✅ LiveKit token received')
+      console.log('🔗 Connecting to:', wsUrl)
 
       // Connect to LiveKit room
-      const livekitRoom = new Room()
+      const livekitRoom = new Room({
+        // Enable more verbose logging for debugging
+        logLevel: 'debug',
+        // Adaptive stream settings
+        adaptiveStream: true,
+        // Dynacast for better performance
+        dynacast: true,
+      })
       setRoom(livekitRoom)
 
-      // Set up event listeners
+      // Set up comprehensive event listeners
       livekitRoom.on('trackSubscribed', handleTrackSubscribed)
       livekitRoom.on('trackUnsubscribed', handleTrackUnsubscribed)
       livekitRoom.on('disconnected', handleDisconnected)
+      
+      // Connection state monitoring
+      livekitRoom.on('connectionStateChanged', (state) => {
+        console.log('🔌 Connection state changed:', state)
+        if (state === 'connected') {
+          console.log('✅ Successfully connected to LiveKit room')
+        } else if (state === 'reconnecting') {
+          console.log('🔄 Reconnecting to LiveKit...')
+          setStatus('connecting')
+        }
+      })
+      
+      // Connection quality monitoring
+      livekitRoom.on('connectionQualityChanged', (quality, participant) => {
+        console.log('📊 Connection quality:', quality, 'for:', participant?.identity || 'local')
+      })
+      
+      // Participant events
+      livekitRoom.on('participantConnected', (participant) => {
+        console.log('👥 Participant connected:', participant.identity)
+      })
+      
+      livekitRoom.on('participantDisconnected', (participant) => {
+        console.log('👋 Participant disconnected:', participant.identity)
+      })
+      
+      // Data channel events
+      livekitRoom.on('dataReceived', (payload, participant) => {
+        console.log('📦 Data received from:', participant?.identity, payload)
+      })
+      
+      // Error handling
+      livekitRoom.on('error', (error) => {
+        console.error('❌ LiveKit room error:', error)
+        setError(`LiveKit error: ${error.message}. This might be due to network issues or invalid credentials.`)
+      })
+      
+      // Media device errors
+      livekitRoom.on('mediaDevicesError', (error) => {
+        console.error('🎤 Media device error:', error)
+        setError(`Microphone error: ${error.message}`)
+      })
 
-      await livekitRoom.connect(wsUrl, token)
+      console.log('🔌 Connecting to LiveKit room...')
+      try {
+        await livekitRoom.connect(wsUrl, token)
+        console.log('✅ Connected to LiveKit room:', interview.livekit_room_name)
+      } catch (connectError) {
+        console.error('❌ Failed to connect to LiveKit:', connectError)
+        throw new Error(
+          `LiveKit connection failed: ${connectError.message}\n\n` +
+          'Possible causes:\n' +
+          '1. Invalid or expired LiveKit credentials\n' +
+          '2. Network/firewall blocking WebRTC connections\n' +
+          '3. LiveKit server is unavailable\n\n' +
+          'Please check your LiveKit configuration in the .env file.'
+        )
+      }
 
-      // Start microphone
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      // Start microphone with better error handling
+      console.log('🎤 Requesting microphone access...')
+      let stream
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            sampleRate: 48000,
+            channelCount: 1
+          } 
+        })
+        console.log('✅ Microphone access granted')
+      } catch (mediaError) {
+        console.error('❌ Microphone error:', mediaError)
+        if (mediaError.name === 'NotAllowedError') {
+          throw new Error('Microphone permission denied. Please allow microphone access and refresh the page.')
+        } else if (mediaError.name === 'NotFoundError') {
+          throw new Error('No microphone found. Please connect a microphone and refresh the page.')
+        } else if (mediaError.name === 'NotReadableError') {
+          throw new Error('Microphone is already in use by another application. Please close other apps using the microphone.')
+        } else {
+          throw new Error(`Microphone error: ${mediaError.message}`)
+        }
+      }
+
       mediaStreamRef.current = stream
-      await livekitRoom.localParticipant.publishTrack(stream.getAudioTracks()[0])
+      console.log('🎵 Publishing audio track...')
+      try {
+        await livekitRoom.localParticipant.publishTrack(stream.getAudioTracks()[0])
+        console.log('✅ Audio track published successfully')
+      } catch (publishError) {
+        console.error('❌ Failed to publish audio track:', publishError)
+        throw new Error(`Failed to publish audio: ${publishError.message}`)
+      }
 
       setStatus('ready')
+      console.log('✅ Interview initialization complete!')
       
       // Start first question
       startQuestion(0)
     } catch (error) {
-      console.error('Error initializing interview:', error)
+      console.error('❌ Error initializing interview:', error)
+      console.error('Error stack:', error.stack)
       setError(error.message)
+      
+      // Cleanup on error
+      if (room) {
+        try {
+          room.disconnect()
+        } catch (e) {
+          console.error('Error disconnecting room:', e)
+        }
+      }
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach(track => track.stop())
+      }
     }
   }
 
