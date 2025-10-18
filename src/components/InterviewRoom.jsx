@@ -326,7 +326,44 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
   const playAudioFromUrl = async (url) => {
     return new Promise((resolve, reject) => {
       console.log('🎶 playAudioFromUrl called')
-      console.log('📊 URL preview:', url.substring(0, 50) + '...')
+      console.log('📊 URL length:', url?.length)
+      console.log('📊 URL starts with:', url?.substring(0, 30))
+      
+      if (!url || !url.startsWith('data:audio/mpeg;base64,')) {
+        const error = new Error('Invalid audio URL format')
+        console.error('❌', error.message)
+        reject(error)
+        return
+      }
+      
+      // Verify base64 data exists
+      const base64Data = url.split(',')[1]
+      if (!base64Data || base64Data.length < 100) {
+        const error = new Error('Audio data is empty or too short')
+        console.error('❌', error.message, 'Length:', base64Data?.length)
+        reject(error)
+        return
+      }
+      
+      console.log('✅ Audio data validation passed')
+      console.log('📊 Base64 data length:', base64Data.length)
+      
+      // Try converting to Blob URL (sometimes more reliable)
+      let audioUrl = url
+      try {
+        console.log('🔄 Converting base64 to Blob for better compatibility...')
+        const binaryString = atob(base64Data)
+        const bytes = new Uint8Array(binaryString.length)
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i)
+        }
+        const blob = new Blob([bytes], { type: 'audio/mpeg' })
+        audioUrl = URL.createObjectURL(blob)
+        console.log('✅ Blob URL created:', audioUrl)
+      } catch (blobErr) {
+        console.warn('⚠️ Blob conversion failed, using data URL:', blobErr.message)
+        audioUrl = url
+      }
       
       // Create NEW audio element each time for better reliability
       const audio = new Audio()
@@ -340,8 +377,12 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
       console.log('🎵 Audio element created with:')
       console.log('   Volume:', audio.volume)
       console.log('   Muted:', audio.muted)
+      console.log('   PreLoad:', audio.preload)
       
-      audio.src = url
+      console.log('🔗 Setting audio.src to URL...')
+      audio.src = audioUrl
+      console.log('✅ audio.src set successfully')
+      console.log('📊 Using URL type:', audioUrl.startsWith('blob:') ? 'Blob URL' : 'Data URL')
       
       // Event listeners for tracking playback
       audio.onloadstart = () => {
@@ -372,7 +413,12 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
       }
       
       audio.onended = () => {
-        console.log('✅ Audio playback FINISHED')
+        console.log('🏁 Audio playback FINISHED')
+        // Cleanup blob URL if created
+        if (audioUrl.startsWith('blob:')) {
+          URL.revokeObjectURL(audioUrl)
+          console.log('🗑️ Blob URL cleaned up')
+        }
         resolve()
       }
       
@@ -391,27 +437,55 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
         console.log('⏳ Audio buffering...')
       }
       
-      // Attempt to play
-      console.log('▶️ Calling audio.play()...')
-      audio.play()
-        .then(() => {
-          console.log('✅✅✅ Audio.play() SUCCESS!')
-          console.log('🔊🔊🔊 AUDIO SHOULD BE PLAYING NOW!')
-        })
-        .catch(err => {
-          console.error('❌❌❌ Failed to play audio:', err)
-          console.error('Error name:', err.name)
-          console.error('Error message:', err.message)
-          
-          if (err.name === 'NotAllowedError') {
-            console.error('🚫 Blocked by browser autoplay policy')
-            console.error('💡 Solution: Click "Start Interview" button first')
-          } else if (err.name === 'NotSupportedError') {
-            console.error('🚫 Audio format not supported')
-          }
-          
-          reject(err)
-        })
+      // Force load the audio
+      console.log('📥 Calling audio.load() to decode data...')
+      try {
+        audio.load()
+        console.log('✅ audio.load() called')
+      } catch (loadErr) {
+        console.error('❌ audio.load() failed:', loadErr)
+      }
+      
+      // Attempt to play after a short delay to ensure loading
+      console.log('⏱️ Waiting for audio to be ready...')
+      setTimeout(() => {
+        console.log('▶️ NOW calling audio.play()...')
+        console.log('📊 Audio state before play:')
+        console.log('   readyState:', audio.readyState, '(4=HAVE_ENOUGH_DATA)')
+        console.log('   duration:', audio.duration)
+        console.log('   paused:', audio.paused)
+        console.log('   volume:', audio.volume)
+        console.log('   muted:', audio.muted)
+        
+        audio.play()
+          .then(() => {
+            console.log('✅✅✅ Audio.play() PROMISE RESOLVED!')
+            console.log('🔊🔊🔊 AUDIO IS NOW PLAYING!')
+            console.log('📊 Current playback state:')
+            console.log('   currentTime:', audio.currentTime)
+            console.log('   paused:', audio.paused)
+            console.log('   ended:', audio.ended)
+          })
+          .catch(err => {
+            console.error('❌❌❌ audio.play() PROMISE REJECTED:', err)
+            console.error('Error name:', err.name)
+            console.error('Error message:', err.message)
+            console.error('Error stack:', err.stack)
+            
+            if (err.name === 'NotAllowedError') {
+              console.error('🚫 Blocked by browser autoplay policy')
+              console.error('💡 This should not happen after clicking Start Interview')
+              console.error('💡 Check if AudioContext was properly resumed')
+            } else if (err.name === 'NotSupportedError') {
+              console.error('🚫 Audio format not supported by browser')
+              console.error('💡 Browser might not support MP3 data URLs')
+            } else if (err.name === 'AbortError') {
+              console.error('🚫 Audio playback was aborted')
+            }
+            
+            reject(err)
+          })
+      }, 100) // Small delay to ensure audio is loaded
     })
   }
   
