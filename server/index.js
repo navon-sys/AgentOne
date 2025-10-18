@@ -49,8 +49,46 @@ app.get('/api/health', (req, res) => {
       livekit: !!process.env.LIVEKIT_API_KEY,
       deepgram: !!process.env.DEEPGRAM_API_KEY,
       openai: !!process.env.OPENAI_API_KEY
-    }
+    },
+    openaiConfigured: !!openai
   })
+})
+
+// Test TTS endpoint
+app.get('/api/test-tts', async (req, res) => {
+  try {
+    if (!openai) {
+      return res.json({ 
+        success: false, 
+        message: 'OpenAI not configured',
+        env_key_exists: !!process.env.OPENAI_API_KEY,
+        openai_client_exists: !!openai
+      })
+    }
+    
+    const mp3 = await openai.audio.speech.create({
+      model: "tts-1",
+      voice: "nova",
+      input: "This is a test of the text to speech system.",
+    })
+    
+    const buffer = Buffer.from(await mp3.arrayBuffer())
+    const base64Audio = buffer.toString('base64')
+    const audioDataUrl = `data:audio/mpeg;base64,${base64Audio}`
+    
+    res.json({
+      success: true,
+      message: 'TTS working!',
+      audioUrl: audioDataUrl,
+      audioSize: buffer.length
+    })
+  } catch (error) {
+    res.json({
+      success: false,
+      error: error.message,
+      stack: error.stack
+    })
+  }
 })
 
 // Generate LiveKit access token
@@ -94,54 +132,75 @@ app.post('/api/livekit-token', async (req, res) => {
   }
 })
 
-// Speak question using TTS
+// Speak question using TTS - Returns audio directly
 app.post('/api/speak-question', async (req, res) => {
   try {
     const { interviewId, question, roomName } = req.body
 
     console.log('🔊 TTS Request for:', question)
+    console.log('📊 OpenAI configured:', !!openai)
     
-    // For demonstration, we'll use OpenAI's TTS
-    if (openai) {
-      try {
-        const mp3 = await openai.audio.speech.create({
-          model: "tts-1",
-          voice: "nova", // Similar to Amy Medium
-          input: question,
-        })
+    // Check if OpenAI is configured
+    if (!openai) {
+      console.warn('⚠️ OpenAI not configured')
+      return res.json({ 
+        success: false, 
+        message: 'TTS not configured - OpenAI API key missing',
+        audioUrl: null
+      })
+    }
+    
+    try {
+      console.log('🎵 Generating speech with OpenAI TTS...')
+      const mp3 = await openai.audio.speech.create({
+        model: "tts-1",
+        voice: "nova", // Clear, professional voice
+        input: question,
+        speed: 1.0
+      })
 
-        const buffer = Buffer.from(await mp3.arrayBuffer())
-        
-        // Convert buffer to base64 data URL
-        const base64Audio = buffer.toString('base64')
-        const audioDataUrl = `data:audio/mpeg;base64,${base64Audio}`
-        
-        console.log('✅ Audio generated, size:', buffer.length, 'bytes')
-        
-        // Return audio as data URL for immediate playback
-        res.json({ 
-          success: true, 
-          audioUrl: audioDataUrl,
-          message: 'Question spoken (using OpenAI TTS)' 
-        })
-      } catch (error) {
-        console.error('TTS Error:', error)
-        res.json({ 
-          success: true, 
-          message: 'Question queued (TTS error)',
-          error: error.message
-        })
-      }
-    } else {
-      console.warn('⚠️ OpenAI not configured, no TTS available')
+      console.log('📥 Converting audio to buffer...')
+      const buffer = Buffer.from(await mp3.arrayBuffer())
+      console.log('✅ Audio buffer created, size:', buffer.length, 'bytes')
+      
+      // Convert buffer to base64 data URL
+      const base64Audio = buffer.toString('base64')
+      const audioDataUrl = `data:audio/mpeg;base64,${base64Audio}`
+      
+      console.log('✅ Audio data URL created, length:', audioDataUrl.length)
+      console.log('📤 Sending response with audioUrl...')
+      
+      // Return audio as data URL for immediate playback
       res.json({ 
         success: true, 
-        message: 'Question queued (TTS not configured)' 
+        audioUrl: audioDataUrl,
+        message: 'Question spoken (using OpenAI TTS)',
+        audioSize: buffer.length
+      })
+      
+      console.log('✅ Response sent successfully')
+    } catch (error) {
+      console.error('❌ TTS Generation Error:', error)
+      console.error('Error details:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack?.split('\n')[0]
+      })
+      
+      res.json({ 
+        success: false, 
+        message: 'TTS generation failed',
+        error: error.message,
+        audioUrl: null
       })
     }
   } catch (error) {
-    console.error('Error speaking question:', error)
-    res.status(500).json({ error: error.message })
+    console.error('❌ Server Error:', error)
+    res.status(500).json({ 
+      success: false,
+      error: error.message,
+      audioUrl: null
+    })
   }
 })
 

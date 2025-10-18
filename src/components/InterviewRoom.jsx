@@ -269,7 +269,8 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
     // Request backend to generate speech for the question
     try {
       const apiUrl = import.meta.env.VITE_API_URL || 'http://20.82.140.166:3001'
-      console.log('🔊 Requesting AI voice for question...')
+      console.log('🔊 Requesting AI voice for question:', question)
+      console.log('🎯 API URL:', apiUrl)
       
       const response = await fetch(`${apiUrl}/api/speak-question`, {
         method: 'POST',
@@ -281,24 +282,41 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
         })
       })
       
+      console.log('📡 Response status:', response.status, response.statusText)
+      
+      if (!response.ok) {
+        console.error('❌ TTS request failed:', response.status)
+        throw new Error(`TTS request failed: ${response.status}`)
+      }
+      
       const data = await response.json()
+      console.log('📊 Response data:', {
+        success: data.success,
+        hasAudioUrl: !!data.audioUrl,
+        audioUrlLength: data.audioUrl?.length,
+        message: data.message
+      })
       
       // If we have an audio URL, play it
       if (data.audioUrl) {
-        console.log('🎵 Playing AI voice from URL:', data.audioUrl)
+        console.log('🎵 Playing AI voice...')
+        console.log('📝 Audio URL preview:', data.audioUrl.substring(0, 50) + '...')
         await playAudioFromUrl(data.audioUrl)
       } else {
-        console.log('💬 No audio URL, using text-only mode')
+        console.warn('⚠️ No audio URL received from backend')
+        console.log('💬 Response message:', data.message)
         // Wait a moment to simulate speaking
         await new Promise(resolve => setTimeout(resolve, 2000))
       }
 
       // After speaking, start listening for response
+      console.log('🎤 Transitioning to listening mode...')
       setStatus('listening')
       startListening(questionIndex)
       
     } catch (error) {
-      console.error('Error speaking question:', error)
+      console.error('❌ Error in question speaking flow:', error)
+      console.error('Error details:', error.message, error.stack)
       // Continue anyway with text mode
       setStatus('listening')
       startListening(questionIndex)
@@ -307,28 +325,93 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
   
   const playAudioFromUrl = async (url) => {
     return new Promise((resolve, reject) => {
-      // Create audio element if not exists
-      if (!audioPlayerRef.current) {
-        audioPlayerRef.current = new Audio()
-      }
+      console.log('🎶 playAudioFromUrl called')
+      console.log('📊 URL preview:', url.substring(0, 50) + '...')
       
-      const audio = audioPlayerRef.current
+      // Create NEW audio element each time for better reliability
+      const audio = new Audio()
+      audioPlayerRef.current = audio
+      
+      // Configure audio for laptop speakers
+      audio.volume = 1.0      // Maximum volume
+      audio.muted = false     // Ensure not muted
+      audio.preload = 'auto'  // Preload audio data
+      
+      console.log('🎵 Audio element created with:')
+      console.log('   Volume:', audio.volume)
+      console.log('   Muted:', audio.muted)
+      
       audio.src = url
       
+      // Event listeners for tracking playback
+      audio.onloadstart = () => {
+        console.log('📥 Audio loading started...')
+      }
+      
+      audio.onloadeddata = () => {
+        console.log('✅ Audio data loaded!')
+        console.log('   Duration:', audio.duration, 'seconds')
+        console.log('   Ready to play:', audio.readyState >= 2)
+      }
+      
+      audio.onplay = () => {
+        console.log('▶️ Audio playback STARTED - You should hear it now!')
+      }
+      
+      audio.onplaying = () => {
+        console.log('🔊 Audio is PLAYING through speakers')
+      }
+      
+      audio.ontimeupdate = () => {
+        // Log progress every second
+        const current = Math.floor(audio.currentTime)
+        const total = Math.floor(audio.duration)
+        if (current > 0 && current % 1 === 0) {
+          console.log(`⏱️ Playing: ${current}s / ${total}s`)
+        }
+      }
+      
       audio.onended = () => {
-        console.log('✅ Audio playback finished')
+        console.log('✅ Audio playback FINISHED')
         resolve()
       }
       
       audio.onerror = (e) => {
-        console.error('❌ Audio playback error:', e)
-        reject(e)
+        console.error('❌ Audio ERROR:', e)
+        console.error('Error code:', audio.error?.code)
+        console.error('Error message:', audio.error?.message)
+        reject(new Error(`Audio error: ${audio.error?.message}`))
       }
       
-      audio.play().catch(err => {
-        console.error('Failed to play audio:', err)
-        reject(err)
-      })
+      audio.onstalled = () => {
+        console.warn('⚠️ Audio playback stalled')
+      }
+      
+      audio.onwaiting = () => {
+        console.log('⏳ Audio buffering...')
+      }
+      
+      // Attempt to play
+      console.log('▶️ Calling audio.play()...')
+      audio.play()
+        .then(() => {
+          console.log('✅✅✅ Audio.play() SUCCESS!')
+          console.log('🔊🔊🔊 AUDIO SHOULD BE PLAYING NOW!')
+        })
+        .catch(err => {
+          console.error('❌❌❌ Failed to play audio:', err)
+          console.error('Error name:', err.name)
+          console.error('Error message:', err.message)
+          
+          if (err.name === 'NotAllowedError') {
+            console.error('🚫 Blocked by browser autoplay policy')
+            console.error('💡 Solution: Click "Start Interview" button first')
+          } else if (err.name === 'NotSupportedError') {
+            console.error('🚫 Audio format not supported')
+          }
+          
+          reject(err)
+        })
     })
   }
   
@@ -671,9 +754,19 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
             </div>
             <div className={`flex items-center space-x-2 ${status === 'speaking' ? 'text-blue-600' : 'text-gray-400'}`}>
               <div className={`w-3 h-3 rounded-full ${status === 'speaking' ? 'bg-blue-500 animate-pulse' : 'bg-gray-300'}`}></div>
-              <span className="font-medium">Speaking</span>
+              <span className="font-medium">🔊 Speaking</span>
             </div>
           </div>
+          {status === 'speaking' && (
+            <div className="mt-3 text-center p-2 bg-blue-50 rounded-lg">
+              <p className="text-sm text-blue-700 font-medium animate-pulse">
+                🎵 AI is speaking the question... Listen through your speakers!
+              </p>
+              <p className="text-xs text-blue-600 mt-1">
+                Make sure your laptop volume is turned up
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Transcript */}
