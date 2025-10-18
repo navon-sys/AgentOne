@@ -206,13 +206,30 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
       setUserInteracted(true)
       console.log('✅ Interview initialization complete!')
       
-      // Resume AudioContext if it was suspended
+      // Resume AudioContext immediately on user gesture (CRITICAL for Chrome autoplay policy)
+      if (window.AudioContext || window.webkitAudioContext) {
+        try {
+          const AudioContextClass = window.AudioContext || window.webkitAudioContext
+          const tempContext = new AudioContextClass()
+          if (tempContext.state === 'suspended') {
+            await tempContext.resume()
+            console.log('🎼 AudioContext resumed on user gesture, state:', tempContext.state)
+          } else {
+            console.log('🎼 AudioContext already running, state:', tempContext.state)
+          }
+          tempContext.close() // Clean up
+        } catch (e) {
+          console.warn('⚠️ Could not resume AudioContext:', e)
+        }
+      }
+      
+      // Also resume any existing AudioContext
       if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
         try {
           await audioContextRef.current.resume()
-          console.log('▶️ AudioContext resumed after user interaction')
+          console.log('▶️ Existing AudioContext resumed after user interaction')
         } catch (e) {
-          console.warn('Could not resume AudioContext:', e)
+          console.warn('Could not resume existing AudioContext:', e)
         }
       }
       
@@ -223,6 +240,7 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
         console.log('🔊 Audio element unmuted')
       })
       
+      console.log('🎯 Starting first question...')
       // Start first question
       startQuestion(0)
     } catch (error) {
@@ -324,169 +342,142 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
   }
   
   const playAudioFromUrl = async (url) => {
-    return new Promise((resolve, reject) => {
-      console.log('🎶 playAudioFromUrl called')
-      console.log('📊 URL length:', url?.length)
-      console.log('📊 URL starts with:', url?.substring(0, 30))
+    try {
+      console.log('🎵 Attempting to play audio...')
+      console.log('📊 Audio URL length:', url?.length)
       
+      // Check if AudioContext needs resuming (Chrome autoplay policy)
+      if (window.AudioContext || window.webkitAudioContext) {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext
+        const audioContext = new AudioContextClass()
+        if (audioContext.state === 'suspended') {
+          console.log('🔓 Resuming AudioContext...')
+          await audioContext.resume()
+        }
+        console.log('🎼 AudioContext state:', audioContext.state)
+        
+        // Close to free resources
+        audioContext.close()
+      }
+      
+      // Validate URL format
       if (!url || !url.startsWith('data:audio/mpeg;base64,')) {
-        const error = new Error('Invalid audio URL format')
-        console.error('❌', error.message)
-        reject(error)
-        return
+        throw new Error('Invalid audio URL format')
       }
       
-      // Verify base64 data exists
-      const base64Data = url.split(',')[1]
-      if (!base64Data || base64Data.length < 100) {
-        const error = new Error('Audio data is empty or too short')
-        console.error('❌', error.message, 'Length:', base64Data?.length)
-        reject(error)
-        return
-      }
-      
-      console.log('✅ Audio data validation passed')
-      console.log('📊 Base64 data length:', base64Data.length)
-      
-      // Try converting to Blob URL (sometimes more reliable)
-      let audioUrl = url
+      // Method 1: Try Blob URL (best browser compatibility)
       try {
-        console.log('🔄 Converting base64 to Blob for better compatibility...')
+        console.log('🔄 Converting base64 to Blob...')
+        const base64Data = url.split(',')[1]
+        if (!base64Data) {
+          throw new Error('Invalid base64 data')
+        }
+        
         const binaryString = atob(base64Data)
         const bytes = new Uint8Array(binaryString.length)
         for (let i = 0; i < binaryString.length; i++) {
           bytes[i] = binaryString.charCodeAt(i)
         }
-        const blob = new Blob([bytes], { type: 'audio/mpeg' })
-        audioUrl = URL.createObjectURL(blob)
-        console.log('✅ Blob URL created:', audioUrl)
-      } catch (blobErr) {
-        console.warn('⚠️ Blob conversion failed, using data URL:', blobErr.message)
-        audioUrl = url
-      }
-      
-      // Create NEW audio element each time for better reliability
-      const audio = new Audio()
-      audioPlayerRef.current = audio
-      
-      // Configure audio for laptop speakers
-      audio.volume = 1.0      // Maximum volume
-      audio.muted = false     // Ensure not muted
-      audio.preload = 'auto'  // Preload audio data
-      
-      console.log('🎵 Audio element created with:')
-      console.log('   Volume:', audio.volume)
-      console.log('   Muted:', audio.muted)
-      console.log('   PreLoad:', audio.preload)
-      
-      console.log('🔗 Setting audio.src to URL...')
-      audio.src = audioUrl
-      console.log('✅ audio.src set successfully')
-      console.log('📊 Using URL type:', audioUrl.startsWith('blob:') ? 'Blob URL' : 'Data URL')
-      
-      // Event listeners for tracking playback
-      audio.onloadstart = () => {
-        console.log('📥 Audio loading started...')
-      }
-      
-      audio.onloadeddata = () => {
-        console.log('✅ Audio data loaded!')
-        console.log('   Duration:', audio.duration, 'seconds')
-        console.log('   Ready to play:', audio.readyState >= 2)
-      }
-      
-      audio.onplay = () => {
-        console.log('▶️ Audio playback STARTED - You should hear it now!')
-      }
-      
-      audio.onplaying = () => {
-        console.log('🔊 Audio is PLAYING through speakers')
-      }
-      
-      audio.ontimeupdate = () => {
-        // Log progress every second
-        const current = Math.floor(audio.currentTime)
-        const total = Math.floor(audio.duration)
-        if (current > 0 && current % 1 === 0) {
-          console.log(`⏱️ Playing: ${current}s / ${total}s`)
-        }
-      }
-      
-      audio.onended = () => {
-        console.log('🏁 Audio playback FINISHED')
-        // Cleanup blob URL if created
-        if (audioUrl.startsWith('blob:')) {
-          URL.revokeObjectURL(audioUrl)
-          console.log('🗑️ Blob URL cleaned up')
-        }
-        resolve()
-      }
-      
-      audio.onerror = (e) => {
-        console.error('❌ Audio ERROR:', e)
-        console.error('Error code:', audio.error?.code)
-        console.error('Error message:', audio.error?.message)
-        reject(new Error(`Audio error: ${audio.error?.message}`))
-      }
-      
-      audio.onstalled = () => {
-        console.warn('⚠️ Audio playback stalled')
-      }
-      
-      audio.onwaiting = () => {
-        console.log('⏳ Audio buffering...')
-      }
-      
-      // Force load the audio
-      console.log('📥 Calling audio.load() to decode data...')
-      try {
-        audio.load()
-        console.log('✅ audio.load() called')
-      } catch (loadErr) {
-        console.error('❌ audio.load() failed:', loadErr)
-      }
-      
-      // Attempt to play after a short delay to ensure loading
-      console.log('⏱️ Waiting for audio to be ready...')
-      setTimeout(() => {
-        console.log('▶️ NOW calling audio.play()...')
-        console.log('📊 Audio state before play:')
-        console.log('   readyState:', audio.readyState, '(4=HAVE_ENOUGH_DATA)')
-        console.log('   duration:', audio.duration)
-        console.log('   paused:', audio.paused)
-        console.log('   volume:', audio.volume)
-        console.log('   muted:', audio.muted)
         
-        audio.play()
-          .then(() => {
-            console.log('✅✅✅ Audio.play() PROMISE RESOLVED!')
-            console.log('🔊🔊🔊 AUDIO IS NOW PLAYING!')
-            console.log('📊 Current playback state:')
-            console.log('   currentTime:', audio.currentTime)
-            console.log('   paused:', audio.paused)
-            console.log('   ended:', audio.ended)
+        const blob = new Blob([bytes], { type: 'audio/mpeg' })
+        console.log('✅ Blob created, size:', blob.size, 'bytes')
+        
+        const audioUrl = URL.createObjectURL(blob)
+        console.log('🔗 Blob URL created:', audioUrl.substring(0, 50) + '...')
+        
+        // Create and configure audio element
+        const audio = new Audio()
+        audio.src = audioUrl
+        audio.volume = 1.0
+        audio.muted = false
+        audio.preload = 'auto'
+        
+        // Store ref for cleanup
+        if (audioPlayerRef.current) {
+          audioPlayerRef.current.pause()
+          if (audioPlayerRef.current.src.startsWith('blob:')) {
+            URL.revokeObjectURL(audioPlayerRef.current.src)
+          }
+        }
+        audioPlayerRef.current = audio
+        
+        // Add comprehensive event listeners
+        audio.onloadedmetadata = () => {
+          console.log('📝 Audio metadata loaded, duration:', audio.duration, 'seconds')
+        }
+        
+        audio.oncanplaythrough = () => {
+          console.log('✅ Audio can play through')
+        }
+        
+        audio.onplay = () => {
+          console.log('▶️ Audio started playing')
+          setStatus('speaking')
+        }
+        
+        audio.onended = () => {
+          console.log('⏹️ Audio finished playing')
+          URL.revokeObjectURL(audioUrl) // Cleanup
+          setStatus('listening')
+        }
+        
+        audio.onerror = (e) => {
+          console.error('❌ Audio playback error:', {
+            error: audio.error,
+            code: audio.error?.code,
+            message: audio.error?.message,
+            src: audio.src.substring(0, 50)
           })
-          .catch(err => {
-            console.error('❌❌❌ audio.play() PROMISE REJECTED:', err)
-            console.error('Error name:', err.name)
-            console.error('Error message:', err.message)
-            console.error('Error stack:', err.stack)
-            
-            if (err.name === 'NotAllowedError') {
-              console.error('🚫 Blocked by browser autoplay policy')
-              console.error('💡 This should not happen after clicking Start Interview')
-              console.error('💡 Check if AudioContext was properly resumed')
-            } else if (err.name === 'NotSupportedError') {
-              console.error('🚫 Audio format not supported by browser')
-              console.error('💡 Browser might not support MP3 data URLs')
-            } else if (err.name === 'AbortError') {
-              console.error('🚫 Audio playback was aborted')
-            }
-            
-            reject(err)
-          })
-      }, 100) // Small delay to ensure audio is loaded
-    })
+          setStatus('listening')
+        }
+        
+        // Wait for audio to be ready
+        await new Promise((resolve, reject) => {
+          audio.addEventListener('canplay', resolve, { once: true })
+          audio.addEventListener('error', reject, { once: true })
+          audio.load()
+          
+          // Timeout after 5 seconds
+          setTimeout(() => reject(new Error('Audio load timeout')), 5000)
+        })
+        
+        console.log('🎬 Attempting to play...')
+        const playPromise = audio.play()
+        
+        if (playPromise !== undefined) {
+          await playPromise
+          console.log('🎉 Audio playing successfully!')
+        }
+        
+      } catch (blobError) {
+        console.error('❌ Blob method failed:', blobError)
+        
+        // Method 2: Fallback to direct data URL
+        console.log('🔄 Trying direct data URL method...')
+        const audio = new Audio(url)
+        audio.volume = 1.0
+        audio.muted = false
+        
+        audioPlayerRef.current = audio
+        
+        audio.onplay = () => console.log('▶️ Data URL audio playing')
+        audio.onended = () => setStatus('listening')
+        audio.onerror = (e) => console.error('❌ Data URL error:', e)
+        
+        await audio.play()
+        console.log('🎉 Data URL playback started!')
+      }
+      
+    } catch (error) {
+      console.error('❌ All audio playback methods failed:', error)
+      setStatus('listening')
+      
+      // Show user-friendly error
+      alert('⚠️ Audio playback failed. Please check:\n' +
+            '1. Browser permissions for audio\n' +
+            '2. System volume is not muted\n' +
+            '3. Try clicking "Start Interview" again')
+    }
   }
   
   const stopListening = () => {
@@ -1004,6 +995,71 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
               )}
             </div>
           )}
+        </div>
+
+        {/* Audio Test Button (for debugging) */}
+        <div className="mt-6 card">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">🔧 Audio System Test</h3>
+          <p className="text-xs text-gray-600 mb-3">
+            Click below to test if your browser can play audio through speakers:
+          </p>
+          <button
+            onClick={async () => {
+              try {
+                console.log('🔍 === AUDIO DIAGNOSTIC TEST ===')
+                
+                // Test 1: AudioContext
+                if (window.AudioContext || window.webkitAudioContext) {
+                  const AudioContextClass = window.AudioContext || window.webkitAudioContext
+                  const testContext = new AudioContextClass()
+                  console.log('✅ AudioContext supported, state:', testContext.state)
+                  
+                  if (testContext.state === 'suspended') {
+                    await testContext.resume()
+                    console.log('🔓 AudioContext resumed, new state:', testContext.state)
+                  }
+                  
+                  // Play a test beep
+                  const oscillator = testContext.createOscillator()
+                  const gainNode = testContext.createGain()
+                  oscillator.connect(gainNode)
+                  gainNode.connect(testContext.destination)
+                  
+                  gainNode.gain.value = 0.3 // 30% volume
+                  oscillator.frequency.value = 440 // A4 note
+                  oscillator.start()
+                  setTimeout(() => {
+                    oscillator.stop()
+                    testContext.close()
+                  }, 200)
+                  
+                  console.log('🔔 Test beep sent (440Hz for 200ms)')
+                  alert('✅ Test beep sent!\n\nDid you hear a short beep?\n\n' +
+                        '✓ YES: Your audio system works!\n' +
+                        '✗ NO: Check system volume/speakers')
+                } else {
+                  console.error('❌ AudioContext not supported')
+                  alert('❌ AudioContext not supported in this browser')
+                }
+                
+                // Test 2: HTML5 Audio Element
+                console.log('🎵 Testing HTML5 Audio element...')
+                const testAudio = new Audio()
+                console.log('   play() method exists:', typeof testAudio.play === 'function')
+                console.log('   volume settable:', testAudio.volume === 1.0)
+                console.log('   not muted:', !testAudio.muted)
+                
+                console.log('🔍 === DIAGNOSTIC TEST COMPLETE ===')
+                
+              } catch (error) {
+                console.error('❌ Diagnostic test failed:', error)
+                alert('❌ Test failed: ' + error.message)
+              }
+            }}
+            className="btn-secondary w-full text-sm"
+          >
+            🔍 Test Audio System
+          </button>
         </div>
 
         {/* Emergency Exit */}
