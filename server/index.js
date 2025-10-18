@@ -23,6 +23,24 @@ const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
   : null
 
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'AI Interview Platform API',
+    status: 'running',
+    version: '1.0.0',
+    endpoints: {
+      health: '/api/health',
+      livekitToken: 'POST /api/livekit-token',
+      speakQuestion: 'POST /api/speak-question',
+      transcribe: 'POST /api/transcribe',
+      generateResponse: 'POST /api/generate-response',
+      generateSummary: 'POST /api/generate-summary',
+      piperTTS: 'POST /api/piper-tts'
+    }
+  })
+})
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ 
@@ -60,27 +78,30 @@ app.post('/api/livekit-token', async (req, res) => {
       canSubscribe: true,
     })
 
-    const token = at.toJwt()
+    const token = await at.toJwt()
     const wsUrl = process.env.VITE_LIVEKIT_URL || 'ws://20.82.140.166:7880'
 
-    res.json({ token, wsUrl })
+    // Ensure token is a string
+    const tokenString = String(token)
+    
+    console.log('Generated LiveKit token for:', participantName, 'in room:', roomName)
+    console.log('Token length:', tokenString.length)
+
+    res.json({ token: tokenString, wsUrl })
   } catch (error) {
     console.error('Error generating LiveKit token:', error)
     res.status(500).json({ error: error.message })
   }
 })
 
-// Speak question using TTS (Piper TTS integration would go here)
+// Speak question using TTS
 app.post('/api/speak-question', async (req, res) => {
   try {
     const { interviewId, question, roomName } = req.body
 
-    // In a production environment, this would:
-    // 1. Generate speech using Piper TTS (Amy Medium voice)
-    // 2. Stream the audio to the LiveKit room
-    // 3. Use LiveKit's audio track to play it for the participant
+    console.log('🔊 TTS Request for:', question)
     
-    // For demonstration, we'll use OpenAI's TTS as a fallback
+    // For demonstration, we'll use OpenAI's TTS
     if (openai) {
       try {
         const mp3 = await openai.audio.speech.create({
@@ -91,20 +112,28 @@ app.post('/api/speak-question', async (req, res) => {
 
         const buffer = Buffer.from(await mp3.arrayBuffer())
         
-        // In production, stream this to LiveKit room
-        // For now, we'll just acknowledge the request
+        // Convert buffer to base64 data URL
+        const base64Audio = buffer.toString('base64')
+        const audioDataUrl = `data:audio/mpeg;base64,${base64Audio}`
+        
+        console.log('✅ Audio generated, size:', buffer.length, 'bytes')
+        
+        // Return audio as data URL for immediate playback
         res.json({ 
           success: true, 
-          message: 'Question spoken (using OpenAI TTS demo)' 
+          audioUrl: audioDataUrl,
+          message: 'Question spoken (using OpenAI TTS)' 
         })
       } catch (error) {
         console.error('TTS Error:', error)
         res.json({ 
           success: true, 
-          message: 'Question queued (TTS not configured)' 
+          message: 'Question queued (TTS error)',
+          error: error.message
         })
       }
     } else {
+      console.warn('⚠️ OpenAI not configured, no TTS available')
       res.json({ 
         success: true, 
         message: 'Question queued (TTS not configured)' 

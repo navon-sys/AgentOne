@@ -3,23 +3,24 @@ import { supabase } from '../supabaseClient'
 import { Room } from 'livekit-client'
 
 const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
-  const [status, setStatus] = useState('connecting') // connecting, listening, thinking, speaking, completed
+  const [status, setStatus] = useState('waiting') // waiting, connecting, ready, listening, thinking, speaking, completed
   const [currentQuestion, setCurrentQuestion] = useState(0)
   const [transcript, setTranscript] = useState([])
   const [room, setRoom] = useState(null)
   const [error, setError] = useState(null)
   const audioContextRef = useRef(null)
   const mediaStreamRef = useRef(null)
+  const [userInteracted, setUserInteracted] = useState(false)
+  const [isRecording, setIsRecording] = useState(false)
+  const recognitionRef = useRef(null)
+  const audioPlayerRef = useRef(null)
 
   const questions = candidate.custom_questions || []
   const totalQuestions = questions.length
 
   useEffect(() => {
-    // Initialize interview
-    initializeInterview()
-    
+    // Cleanup on unmount
     return () => {
-      // Cleanup
       if (room) {
         console.log('Cleaning up LiveKit room connection')
         room.removeAllListeners()
@@ -28,8 +29,17 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
       if (mediaStreamRef.current) {
         mediaStreamRef.current.getTracks().forEach(track => track.stop())
       }
+      if (audioContextRef.current) {
+        audioContextRef.current.close()
+      }
+      if (recognitionRef.current) {
+        recognitionRef.current.stop()
+      }
+      if (audioPlayerRef.current) {
+        audioPlayerRef.current.pause()
+      }
     }
-  }, [])
+  }, [room])
 
   const initializeInterview = async () => {
     try {
@@ -193,7 +203,25 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
       }
 
       setStatus('ready')
+      setUserInteracted(true)
       console.log('✅ Interview initialization complete!')
+      
+      // Resume AudioContext if it was suspended
+      if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+        try {
+          await audioContextRef.current.resume()
+          console.log('▶️ AudioContext resumed after user interaction')
+        } catch (e) {
+          console.warn('Could not resume AudioContext:', e)
+        }
+      }
+      
+      // Unmute any audio elements
+      const audioElements = document.querySelectorAll('audio')
+      audioElements.forEach(el => {
+        el.muted = false
+        console.log('🔊 Audio element unmuted')
+      })
       
       // Start first question
       startQuestion(0)
@@ -238,10 +266,12 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
 
     addToTranscript(aiMessage)
 
-    // Request backend to speak the question
+    // Request backend to generate speech for the question
     try {
       const apiUrl = import.meta.env.VITE_API_URL || 'http://20.82.140.166:3001'
-      await fetch(`${apiUrl}/api/speak-question`, {
+      console.log('🔊 Requesting AI voice for question...')
+      
+      const response = await fetch(`${apiUrl}/api/speak-question`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -250,26 +280,154 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
           roomName: interview.livekit_room_name
         })
       })
+      
+      const data = await response.json()
+      
+      // If we have an audio URL, play it
+      if (data.audioUrl) {
+        console.log('🎵 Playing AI voice from URL:', data.audioUrl)
+        await playAudioFromUrl(data.audioUrl)
+      } else {
+        console.log('💬 No audio URL, using text-only mode')
+        // Wait a moment to simulate speaking
+        await new Promise(resolve => setTimeout(resolve, 2000))
+      }
 
       // After speaking, start listening for response
-      setTimeout(() => {
-        setStatus('listening')
-        startListening(questionIndex)
-      }, 2000)
+      setStatus('listening')
+      startListening(questionIndex)
+      
     } catch (error) {
       console.error('Error speaking question:', error)
-      setError('Error communicating with interview system')
+      // Continue anyway with text mode
+      setStatus('listening')
+      startListening(questionIndex)
     }
+  }
+  
+  const playAudioFromUrl = async (url) => {
+    return new Promise((resolve, reject) => {
+      // Create audio element if not exists
+      if (!audioPlayerRef.current) {
+        audioPlayerRef.current = new Audio()
+      }
+      
+      const audio = audioPlayerRef.current
+      audio.src = url
+      
+      audio.onended = () => {
+        console.log('✅ Audio playback finished')
+        resolve()
+      }
+      
+      audio.onerror = (e) => {
+        console.error('❌ Audio playback error:', e)
+        reject(e)
+      }
+      
+      audio.play().catch(err => {
+        console.error('Failed to play audio:', err)
+        reject(err)
+      })
+    })
+  }
+  
+  const stopListening = () => {
+    if (recognitionRef.current) {
+      console.log('⏹️ Stopping voice recognition')
+      recognitionRef.current.stop()
+      setIsRecording(false)
+    }
+  }
   }
 
   const startListening = async (questionIndex) => {
-    // Listen for candidate's response
-    // In a real implementation, this would use Deepgram for real-time transcription
-    // For now, we'll simulate the flow
+    console.log('🎤 Starting voice recognition...')
     
-    // After 30 seconds or when user clicks "Next Question", process the answer
-    // This is a simplified version - the actual implementation would use
-    // real-time speech recognition via Deepgram
+    // Check if browser supports Web Speech API
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    
+    if (!SpeechRecognition) {
+      console.warn('⚠️ Web Speech API not supported, falling back to text input')
+      return // Fall back to demo mode
+    }
+    
+    try {
+      // Create speech recognition instance
+      const recognition = new SpeechRecognition()
+      recognitionRef.current = recognition
+      
+      // Configure recognition
+      recognition.continuous = true
+      recognition.interimResults = true
+      recognition.lang = 'en-US'
+      
+      let finalTranscript = ''
+      let interimTranscript = ''
+      
+      // Handle results
+      recognition.onresult = (event) => {
+        interimTranscript = ''
+        
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript
+          
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript + ' '
+            console.log('📝 Final transcript:', transcript)
+          } else {
+            interimTranscript += transcript
+            console.log('📝 Interim transcript:', transcript)
+          }
+        }
+        
+        // Show interim results in UI (optional)
+        if (interimTranscript) {
+          console.log('👁️ Listening...:', interimTranscript)
+        }
+      }
+      
+      // Handle errors
+      recognition.onerror = (event) => {
+        console.error('❌ Speech recognition error:', event.error)
+        if (event.error === 'no-speech') {
+          console.log('🤫 No speech detected, continuing to listen...')
+        } else if (event.error === 'aborted') {
+          console.log('⏹️ Recognition stopped')
+        } else {
+          console.error('Recognition error:', event.error)
+        }
+      }
+      
+      // Handle end
+      recognition.onend = () => {
+        console.log('📬 Speech recognition ended')
+        setIsRecording(false)
+        
+        // If we have a transcript, submit it
+        if (finalTranscript.trim()) {
+          console.log('✅ Submitting answer:', finalTranscript.trim())
+          submitAnswer(finalTranscript.trim())
+        }
+      }
+      
+      // Start recognition
+      recognition.start()
+      setIsRecording(true)
+      console.log('▶️ Voice recognition started')
+      
+      // Auto-stop after 60 seconds
+      setTimeout(() => {
+        if (recognitionRef.current) {
+          console.log('⏱️ Time limit reached, stopping recognition')
+          recognitionRef.current.stop()
+        }
+      }, 60000)
+      
+    } catch (error) {
+      console.error('❌ Error starting speech recognition:', error)
+      setIsRecording(false)
+    }
   }
 
   const submitAnswer = async (answer) => {
@@ -314,10 +472,38 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
     setStatus('completed')
   }
 
-  const handleTrackSubscribed = (track, publication, participant) => {
+  const handleTrackSubscribed = async (track, publication, participant) => {
     if (track.kind === 'audio') {
+      console.log('🔊 Audio track subscribed from:', participant.identity)
+      
+      // Create audio element
       const audioElement = track.attach()
+      audioElement.id = `audio-${participant.identity}`
+      
+      // Create or resume AudioContext on user interaction
+      if (!audioContextRef.current) {
+        try {
+          audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)()
+          console.log('🎵 AudioContext created')
+        } catch (e) {
+          console.error('Failed to create AudioContext:', e)
+        }
+      }
+      
+      // Resume AudioContext if suspended (required by Chrome autoplay policy)
+      if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+        console.log('⏸️ AudioContext is suspended, will resume on user interaction')
+        // Don't auto-resume - wait for user to click Start Interview
+        audioElement.muted = true
+      }
+      
+      // Set audio element properties
+      audioElement.autoplay = true
+      audioElement.playsInline = true
+      
+      // Append to body
       document.body.appendChild(audioElement)
+      console.log('✅ Audio element attached')
     }
   }
 
@@ -351,6 +537,68 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
               </ul>
             </div>
           </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Waiting for user to start interview
+  if (status === 'waiting') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+        <div className="max-w-md w-full card text-center">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-500 rounded-full mb-4">
+            <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">
+            Ready to Begin?
+          </h2>
+          <div className="text-left mb-6 space-y-3">
+            <p className="text-gray-700">
+              <strong>Interview Details:</strong>
+            </p>
+            <ul className="text-sm text-gray-600 space-y-2">
+              <li className="flex items-start">
+                <svg className="w-5 h-5 text-blue-500 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span><strong>{totalQuestions}</strong> questions will be asked</span>
+              </li>
+              <li className="flex items-start">
+                <svg className="w-5 h-5 text-blue-500 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                </svg>
+                <span>Your microphone will be used for responses</span>
+              </li>
+              <li className="flex items-start">
+                <svg className="w-5 h-5 text-blue-500 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>Take your time to answer each question</span>
+              </li>
+            </ul>
+          </div>
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6 text-left">
+            <p className="text-sm text-yellow-800">
+              <strong>📱 Before you start:</strong>
+            </p>
+            <ul className="mt-2 text-sm text-yellow-700 space-y-1">
+              <li>• Ensure your microphone is connected</li>
+              <li>• Find a quiet location</li>
+              <li>• Allow microphone permissions when prompted</li>
+            </ul>
+          </div>
+          <button
+            onClick={() => {
+              setStatus('connecting')
+              initializeInterview()
+            }}
+            className="btn-primary w-full text-lg py-3"
+          >
+            🎤 Start Interview
+          </button>
         </div>
       </div>
     )
@@ -461,31 +709,63 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
             )}
           </div>
 
-          {/* Demo Controls - In production, this would be replaced with real-time audio processing */}
+          {/* Voice Recording Controls */}
           {status === 'listening' && (
-            <div className="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-              <p className="text-sm text-yellow-800 mb-3">
-                <strong>Demo Mode:</strong> In production, your voice would be automatically transcribed using Deepgram. 
-                For now, type your answer:
-              </p>
-              <textarea
-                id="demo-answer"
-                className="input-field mb-3"
-                rows="3"
-                placeholder="Type your answer here..."
-              ></textarea>
-              <button
-                onClick={() => {
-                  const answer = document.getElementById('demo-answer').value
-                  if (answer.trim()) {
-                    submitAnswer(answer)
-                    document.getElementById('demo-answer').value = ''
-                  }
-                }}
-                className="btn-primary w-full"
-              >
-                Submit Answer & Continue
-              </button>
+            <div className="mt-6">
+              {isRecording ? (
+                <div className="p-6 bg-green-50 border-2 border-green-400 rounded-lg text-center">
+                  <div className="flex items-center justify-center mb-4">
+                    <div className="w-4 h-4 bg-red-500 rounded-full animate-pulse mr-3"></div>
+                    <span className="text-lg font-semibold text-green-800">🎤 Recording Your Answer...</span>
+                  </div>
+                  <p className="text-sm text-green-700 mb-4">
+                    Speak naturally and clearly. Your voice is being transcribed in real-time.
+                  </p>
+                  <button
+                    onClick={stopListening}
+                    className="btn-secondary"
+                  >
+                    ⏹️ Stop & Submit Answer
+                  </button>
+                </div>
+              ) : (
+                <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                  <div className="flex items-center justify-center mb-3">
+                    <svg className="w-6 h-6 text-blue-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                    </svg>
+                    <span className="text-lg font-semibold text-blue-800">Ready to answer?</span>
+                  </div>
+                  <p className="text-sm text-blue-700 text-center mb-4">
+                    Voice recognition is ready. Click below or type your answer.
+                  </p>
+                  
+                  {/* Fallback text input for browsers without speech recognition */}
+                  <div className="bg-white p-4 rounded-lg border border-blue-200 mb-3">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Or type your answer:
+                    </label>
+                    <textarea
+                      id="demo-answer"
+                      className="input-field mb-3"
+                      rows="3"
+                      placeholder="Type your answer here..."
+                    ></textarea>
+                    <button
+                      onClick={() => {
+                        const answer = document.getElementById('demo-answer').value
+                        if (answer.trim()) {
+                          submitAnswer(answer)
+                          document.getElementById('demo-answer').value = ''
+                        }
+                      }}
+                      className="btn-primary w-full"
+                    >
+                      Submit Written Answer
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
