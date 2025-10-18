@@ -491,9 +491,16 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
   
   const stopListening = () => {
     if (recognitionRef.current) {
-      console.log('⏹️ Stopping voice recognition')
-      recognitionRef.current.stop()
-      setIsRecording(false)
+      console.log('⏹️ Manually stopping voice recognition')
+      try {
+        // Mark as stopped manually to prevent auto-restart
+        recognitionRef.current.isStoppedManually = true
+        recognitionRef.current.stop()
+        setIsRecording(false)
+      } catch (err) {
+        console.error('Error stopping recognition:', err)
+        setIsRecording(false)
+      }
     }
   }
 
@@ -517,9 +524,13 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
       recognition.continuous = true
       recognition.interimResults = true
       recognition.lang = 'en-US'
+      recognition.maxAlternatives = 1
       
       let finalTranscript = ''
       let interimTranscript = ''
+      let isStoppedManually = false
+      let restartCount = 0
+      const MAX_RESTARTS = 5
       
       // Handle results
       recognition.onresult = (event) => {
@@ -546,24 +557,68 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
       // Handle errors
       recognition.onerror = (event) => {
         console.error('❌ Speech recognition error:', event.error)
+        
         if (event.error === 'no-speech') {
-          console.log('🤫 No speech detected, continuing to listen...')
+          console.log('🤫 No speech detected yet, will restart automatically...')
+          // Don't do anything, let onend handle restart
         } else if (event.error === 'aborted') {
-          console.log('⏹️ Recognition stopped')
+          console.log('⏹️ Recognition aborted')
+          isStoppedManually = true
+        } else if (event.error === 'audio-capture') {
+          console.error('🎤 Microphone error - check if mic is working')
+          isStoppedManually = true
+          setIsRecording(false)
+        } else if (event.error === 'not-allowed') {
+          console.error('🚫 Microphone permission denied')
+          isStoppedManually = true
+          setIsRecording(false)
         } else {
-          console.error('Recognition error:', event.error)
+          console.error('❌ Recognition error:', event.error)
         }
       }
       
       // Handle end
       recognition.onend = () => {
         console.log('📬 Speech recognition ended')
-        setIsRecording(false)
         
-        // If we have a transcript, submit it
+        // If stopped manually or have transcript, don't restart
+        if (isStoppedManually) {
+          console.log('⏹️ Stopped manually, not restarting')
+          setIsRecording(false)
+          
+          // Submit if we have transcript
+          if (finalTranscript.trim()) {
+            console.log('✅ Submitting answer:', finalTranscript.trim())
+            submitAnswer(finalTranscript.trim())
+          }
+          return
+        }
+        
+        // If we have a complete answer, submit it
         if (finalTranscript.trim()) {
           console.log('✅ Submitting answer:', finalTranscript.trim())
+          setIsRecording(false)
           submitAnswer(finalTranscript.trim())
+          return
+        }
+        
+        // Restart recognition if no speech detected and still recording
+        if (isRecording && restartCount < MAX_RESTARTS) {
+          restartCount++
+          console.log(`🔄 Restarting recognition (attempt ${restartCount}/${MAX_RESTARTS})...`)
+          setTimeout(() => {
+            try {
+              if (recognitionRef.current && isRecording) {
+                recognitionRef.current.start()
+                console.log('▶️ Recognition restarted')
+              }
+            } catch (err) {
+              console.error('Failed to restart:', err)
+            }
+          }, 100)
+        } else if (restartCount >= MAX_RESTARTS) {
+          console.warn('⚠️ Max restart attempts reached. Showing text input.')
+          setIsRecording(false)
         }
       }
       
@@ -879,17 +934,32 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
           {status === 'listening' && (
             <div className="mt-6">
               {isRecording ? (
-                <div className="p-6 bg-green-50 border-2 border-green-400 rounded-lg text-center">
+                <div className="p-6 bg-green-50 border-2 border-green-400 rounded-lg text-center animate-pulse-slow">
                   <div className="flex items-center justify-center mb-4">
                     <div className="w-4 h-4 bg-red-500 rounded-full animate-pulse mr-3"></div>
-                    <span className="text-lg font-semibold text-green-800">🎤 Recording Your Answer...</span>
+                    <span className="text-lg font-semibold text-green-800">🎤 Listening...</span>
                   </div>
-                  <p className="text-sm text-green-700 mb-4">
-                    Speak naturally and clearly. Your voice is being transcribed in real-time.
-                  </p>
+                  <div className="mb-4">
+                    <div className="flex items-center justify-center space-x-1 mb-2">
+                      <div className="w-2 h-8 bg-green-500 rounded animate-pulse" style={{animationDelay: '0ms'}}></div>
+                      <div className="w-2 h-12 bg-green-500 rounded animate-pulse" style={{animationDelay: '150ms'}}></div>
+                      <div className="w-2 h-6 bg-green-500 rounded animate-pulse" style={{animationDelay: '300ms'}}></div>
+                      <div className="w-2 h-10 bg-green-500 rounded animate-pulse" style={{animationDelay: '450ms'}}></div>
+                      <div className="w-2 h-8 bg-green-500 rounded animate-pulse" style={{animationDelay: '600ms'}}></div>
+                    </div>
+                    <p className="text-sm text-green-700 font-medium mb-2">
+                      🗣️ Start speaking now!
+                    </p>
+                    <p className="text-xs text-green-600 mb-3">
+                      Speak naturally and clearly. Your voice is being transcribed in real-time.
+                    </p>
+                    <p className="text-xs text-gray-500 italic">
+                      💡 Tip: If no speech is detected, recognition will automatically restart
+                    </p>
+                  </div>
                   <button
                     onClick={stopListening}
-                    className="btn-secondary"
+                    className="btn-secondary w-full"
                   >
                     ⏹️ Stop & Submit Answer
                   </button>
