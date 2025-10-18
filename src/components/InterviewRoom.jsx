@@ -339,7 +339,6 @@ const InterviewRoom = ({ candidate, job, interview, onComplete }) => {
       setIsRecording(false)
     }
   }
-  }
 
   const startListening = async (questionIndex) => {
     console.log('🎤 Starting voice recognition...')
