@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
+import QuestionBankManager from './QuestionBankManager'
 
 const CandidateManagement = ({ user, selectedJob, onSelectCandidate, onBack }) => {
   const [candidates, setCandidates] = useState([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
+  const [editingCandidate, setEditingCandidate] = useState(null)
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -41,36 +43,92 @@ const CandidateManagement = ({ user, selectedJob, onSelectCandidate, onBack }) =
   const handleSubmit = async (e) => {
     e.preventDefault()
 
-    const accessToken = generateAccessToken()
-    const interviewLink = `${window.location.origin}?token=${accessToken}`
-
     try {
-      const { data, error } = await supabase
-        .from('candidates')
-        .insert({
-          name: formData.name,
-          email: formData.email,
-          job_id: selectedJob.id,
-          access_token: accessToken,
-          interview_link: interviewLink,
-          custom_questions: formData.customQuestions.length > 0 
-            ? formData.customQuestions 
-            : selectedJob.default_questions || [],
-          status: 'created'
-        })
-        .select()
+      if (editingCandidate) {
+        // Update existing candidate
+        const { error } = await supabase
+          .from('candidates')
+          .update({
+            name: formData.name,
+            email: formData.email,
+            custom_questions: formData.customQuestions.length > 0 
+              ? formData.customQuestions 
+              : selectedJob.default_questions || []
+          })
+          .eq('id', editingCandidate.id)
 
-      if (error) throw error
+        if (error) throw error
+        alert('Candidate updated successfully!')
+      } else {
+        // Create new candidate
+        const accessToken = generateAccessToken()
+        const interviewLink = `${window.location.origin}/interview?token=${accessToken}`
 
-      alert(`Candidate added successfully!\n\nInterview Link:\n${interviewLink}\n\nSend this link to the candidate to start the interview.`)
+        const { data, error } = await supabase
+          .from('candidates')
+          .insert({
+            name: formData.name,
+            email: formData.email,
+            job_id: selectedJob.id,
+            access_token: accessToken,
+            interview_link: interviewLink,
+            custom_questions: formData.customQuestions.length > 0 
+              ? formData.customQuestions 
+              : selectedJob.default_questions || [],
+            status: 'created'
+          })
+          .select()
+
+        if (error) throw error
+
+        alert(`Candidate added successfully!\n\nInterview Link:\n${interviewLink}\n\nSend this link to the candidate to start the interview.`)
+      }
       
       setFormData({ name: '', email: '', customQuestions: [] })
       setShowForm(false)
+      setEditingCandidate(null)
       loadCandidates()
     } catch (error) {
-      console.error('Error creating candidate:', error)
-      alert('Error creating candidate: ' + error.message)
+      console.error('Error saving candidate:', error)
+      alert('Error saving candidate: ' + error.message)
     }
+  }
+
+  const handleEdit = (candidate) => {
+    setEditingCandidate(candidate)
+    setFormData({
+      name: candidate.name,
+      email: candidate.email,
+      customQuestions: candidate.custom_questions || []
+    })
+    setShowForm(true)
+  }
+
+  const handleDelete = async (candidateId, candidateName) => {
+    if (!window.confirm(`Are you sure you want to delete ${candidateName}? This will also delete all interview data.`)) {
+      return
+    }
+
+    try {
+      const { error } = await supabase
+        .from('candidates')
+        .delete()
+        .eq('id', candidateId)
+
+      if (error) throw error
+      
+      alert('Candidate deleted successfully!')
+      loadCandidates()
+    } catch (error) {
+      console.error('Error deleting candidate:', error)
+      alert('Error deleting candidate: ' + error.message)
+    }
+  }
+
+  const handleCancelForm = () => {
+    setShowForm(false)
+    setEditingCandidate(null)
+    setFormData({ name: '', email: '', customQuestions: [] })
   }
 
   const copyInterviewLink = (link) => {
@@ -159,7 +217,9 @@ const CandidateManagement = ({ user, selectedJob, onSelectCandidate, onBack }) =
       {/* Candidate Form */}
       {showForm && (
         <div className="card">
-          <h2 className="text-xl font-bold text-gray-900 mb-4">Add New Candidate</h2>
+          <h2 className="text-xl font-bold text-gray-900 mb-4">
+            {editingCandidate ? 'Edit Candidate' : 'Add New Candidate'}
+          </h2>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -196,60 +256,53 @@ const CandidateManagement = ({ user, selectedJob, onSelectCandidate, onBack }) =
               <p className="text-sm text-gray-500 mb-3">
                 Leave empty to use the default questions for this job: {selectedJob.default_questions?.length || 0} questions
               </p>
-              <div className="space-y-2">
-                {formData.customQuestions.map((question, index) => (
-                  <div key={index} className="flex items-start space-x-2">
-                    <span className="mt-2 text-sm font-medium text-gray-500 w-8">
-                      {index + 1}.
-                    </span>
-                    <input
-                      type="text"
-                      value={question}
-                      onChange={(e) => {
-                        const questions = [...formData.customQuestions]
-                        questions[index] = e.target.value
-                        setFormData({ ...formData, customQuestions: questions })
-                      }}
-                      className="input-field flex-1"
-                      placeholder="Enter custom question..."
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const questions = [...formData.customQuestions]
-                        questions.splice(index, 1)
-                        setFormData({ ...formData, customQuestions: questions })
-                      }}
-                      className="mt-2 text-red-600 hover:text-red-700"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-                ))}
-              </div>
-              {formData.customQuestions.length < 10 && (
-                <button
-                  type="button"
-                  onClick={() => setFormData({ ...formData, customQuestions: [...formData.customQuestions, ''] })}
-                  className="mt-3 text-primary-600 hover:text-primary-700 text-sm font-medium flex items-center"
-                >
-                  <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              
+              {formData.customQuestions.length === 0 ? (
+                <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+                  <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  Add Custom Question
-                </button>
+                  <p className="mt-2 text-sm text-gray-600">
+                    Using {selectedJob.default_questions?.length || 0} default questions from job
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, customQuestions: selectedJob.default_questions || [''] })}
+                    className="mt-3 btn-secondary text-sm"
+                  >
+                    Customize Questions for This Candidate
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <QuestionBankManager
+                    questions={formData.customQuestions}
+                    onChange={(questions) => setFormData({ ...formData, customQuestions: questions })}
+                    maxQuestions={20}
+                    title={`Custom Questions for ${formData.name || 'Candidate'}`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm('Reset to default questions?')) {
+                        setFormData({ ...formData, customQuestions: [] })
+                      }
+                    }}
+                    className="text-sm text-red-600 hover:text-red-700"
+                  >
+                    Reset to Default Questions
+                  </button>
+                </div>
               )}
             </div>
 
             <div className="flex space-x-3 pt-4">
               <button type="submit" className="btn-primary">
-                Create Candidate & Generate Link
+                {editingCandidate ? 'Update Candidate' : 'Create Candidate & Generate Link'}
               </button>
               <button
                 type="button"
-                onClick={() => setShowForm(false)}
+                onClick={handleCancelForm}
                 className="btn-secondary"
               >
                 Cancel
@@ -334,6 +387,24 @@ const CandidateManagement = ({ user, selectedJob, onSelectCandidate, onBack }) =
                     Mark as Link Sent
                   </button>
                 )}
+                <button
+                  onClick={() => handleEdit(candidate)}
+                  className="text-sm border border-blue-300 text-blue-600 hover:bg-blue-50 rounded-lg px-3 py-2 flex items-center"
+                >
+                  <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                  Edit
+                </button>
+                <button
+                  onClick={() => handleDelete(candidate.id, candidate.name)}
+                  className="text-sm border border-red-300 text-red-600 hover:bg-red-50 rounded-lg px-3 py-2 flex items-center"
+                >
+                  <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                  Delete
+                </button>
                 <select
                   value={candidate.status}
                   onChange={(e) => updateStatus(candidate.id, e.target.value)}
