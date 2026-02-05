@@ -1,6 +1,15 @@
 # AI Interview Platform
 
+> **🔧 Latest Update**: Fixed authentication error! See [QUICK_SETUP.md](./QUICK_SETUP.md) for setup instructions.
+
 A full-stack application featuring two distinct user interfaces for conducting AI-powered voice interviews.
+
+## ⚠️ Important: Authentication Fix
+
+**If you're getting "Forbidden use of secret API key in browser" error:**
+- ✅ **Fixed!** User creation now uses a secure backend endpoint
+- 📖 See [QUICK_SETUP.md](./QUICK_SETUP.md) for setup instructions
+- 📚 See [FIX_SIGNUP_ERROR.md](./FIX_SIGNUP_ERROR.md) for detailed explanation
 
 ## 🎯 Overview
 
@@ -100,6 +109,7 @@ PORT=3001
 3. Go to Settings > API
 4. Copy the `Project URL` (VITE_SUPABASE_URL)
 5. Copy the `anon public` key (VITE_SUPABASE_ANON_KEY)
+6. **⚠️ IMPORTANT**: Copy the `service_role` key (SUPABASE_SERVICE_ROLE_KEY) - Keep this secret!
 
 #### LiveKit (Free)
 1. Sign up at https://livekit.io
@@ -201,6 +211,7 @@ The application will be available at:
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/health` | GET | Health check and service status |
+| `/api/admin/create-user` | POST | Create HR user account (secure) |
 | `/api/livekit-token` | POST | Generate LiveKit access token |
 | `/api/speak-question` | POST | Convert question to speech (TTS) |
 | `/api/transcribe` | POST | Transcribe audio (Deepgram STT) |
