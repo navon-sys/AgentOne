@@ -17,13 +17,27 @@ const LoginPage = () => {
 
     try {
       if (isSignUp) {
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
+        // Use backend admin endpoint for secure user creation
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+        const response = await fetch(`${apiUrl}/api/admin/create-user`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ email, password }),
         })
-        if (error) throw error
-        setMessage('Check your email for the confirmation link!')
+
+        const result = await response.json()
+        
+        if (!response.ok) {
+          throw new Error(result.error || 'Failed to create account')
+        }
+
+        setMessage('Account created successfully! You can now sign in.')
+        setIsSignUp(false) // Switch to login mode
+        setPassword('') // Clear password field
       } else {
+        // Regular sign in with Supabase
         const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password,

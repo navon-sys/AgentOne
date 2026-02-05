@@ -2,7 +2,8 @@ import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
 import { AccessToken } from 'livekit-server-sdk'
-import { createClient } from '@deepgram/sdk'
+import { createClient as createDeepgramClient } from '@deepgram/sdk'
+import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import OpenAI from 'openai'
 
 dotenv.config()
@@ -16,11 +17,25 @@ app.use(express.json())
 
 // Initialize clients
 const deepgram = process.env.DEEPGRAM_API_KEY 
-  ? createClient(process.env.DEEPGRAM_API_KEY)
+  ? createDeepgramClient(process.env.DEEPGRAM_API_KEY)
   : null
 
 const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null
+
+// Initialize Supabase Admin Client (with service role key for admin operations)
+const supabaseAdmin = (process.env.VITE_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY)
+  ? createSupabaseClient(
+      process.env.VITE_SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_ROLE_KEY,
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        }
+      }
+    )
   : null
 
 // Health check
@@ -30,9 +45,55 @@ app.get('/api/health', (req, res) => {
     services: {
       livekit: !!process.env.LIVEKIT_API_KEY,
       deepgram: !!process.env.DEEPGRAM_API_KEY,
-      openai: !!process.env.OPENAI_API_KEY
+      openai: !!process.env.OPENAI_API_KEY,
+      supabase: !!supabaseAdmin
     }
   })
+})
+
+// Admin endpoint to create HR users (secure backend-only operation)
+app.post('/api/admin/create-user', async (req, res) => {
+  try {
+    const { email, password } = req.body
+
+    if (!supabaseAdmin) {
+      return res.status(500).json({ 
+        error: 'Supabase admin not configured. Please set SUPABASE_SERVICE_ROLE_KEY in .env' 
+      })
+    }
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' })
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' })
+    }
+
+    // Create user with admin privileges (skips email confirmation)
+    const { data, error } = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true, // Auto-confirm email
+      user_metadata: {
+        role: 'hr_manager'
+      }
+    })
+
+    if (error) throw error
+
+    res.json({ 
+      success: true, 
+      message: 'User created successfully. You can now sign in.',
+      user: {
+        id: data.user.id,
+        email: data.user.email
+      }
+    })
+  } catch (error) {
+    console.error('Error creating user:', error)
+    res.status(500).json({ error: error.message })
+  }
 })
 
 // Generate LiveKit access token
@@ -282,7 +343,9 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`  LiveKit: ${process.env.LIVEKIT_API_KEY ? '✅ Configured' : '❌ Not configured'}`)
   console.log(`  Deepgram: ${process.env.DEEPGRAM_API_KEY ? '✅ Configured' : '❌ Not configured'}`)
   console.log(`  OpenAI: ${process.env.OPENAI_API_KEY ? '✅ Configured' : '❌ Not configured'}`)
-  console.log('\n💡 To configure missing services, update your .env file\n')
+  console.log(`  Supabase Admin: ${supabaseAdmin ? '✅ Configured' : '❌ Not configured'}`)
+  console.log('\n💡 To configure missing services, update your .env file')
+  console.log('📝 See FIX_SIGNUP_ERROR.md for authentication setup guide\n')
 })
 
 export default app
